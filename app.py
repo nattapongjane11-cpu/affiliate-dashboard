@@ -8,7 +8,7 @@ import enum
 import time
 
 # ==========================================
-# 1. ตั้งค่า Database (V5)
+# 1. ตั้งค่า Database (V5 - เชื่อมต่อ Google Cloud)
 # ==========================================
 Base = declarative_base()
 
@@ -76,7 +76,13 @@ class TransactionRecord(Base):
     
     account = relationship("AffiliateAccount", back_populates="transactions")
 
-engine = create_engine('sqlite:///affiliate_farm_v5.db', echo=False)
+# ✨ จุดที่แก้ไข: ดึงลิงก์ฐานข้อมูลจาก Streamlit Secrets 
+try:
+    db_url = st.secrets["DB_URL"]
+except:
+    db_url = 'sqlite:///affiliate_farm_v5.db'
+
+engine = create_engine(db_url, echo=False)
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
@@ -335,151 +341,4 @@ else:
                                     e_comm = c2.number_input("ค่าคอม", value=t_edit.commission_amount, key=f"ec_{acc.id}")
                                     
                                     col_s, col_d = st.columns(2)
-                                    if col_s.form_submit_button("💾 บันทึกแก้ไข"):
-                                        t_edit.shop_name = e_sname
-                                        t_edit.product_name = e_pname
-                                        t_edit.quantity = e_qty
-                                        t_edit.commission_amount = e_comm
-                                        session.commit()
-                                        st.success("แก้ไขสำเร็จ!")
-                                        time.sleep(0.5)
-                                        st.rerun()
-                                    if col_d.form_submit_button("🗑️ ลบออเดอร์นี้"):
-                                        session.delete(t_edit)
-                                        session.commit()
-                                        st.warning("ลบสำเร็จ!")
-                                        time.sleep(0.5)
-                                        st.rerun()
-                            else:
-                                st.info("ยังไม่มีออเดอร์ให้แก้ไข")
-
-                        with t_status:
-                            with st.form(f"upd_stat_{acc.id}"):
-                                c1, c2 = st.columns(2)
-                                n_kyc = c1.selectbox("สถานะ KYC", [e.value for e in KYCStatus], index=list(KYCStatus).index(acc.kyc_status), key=f"kyc_{acc.id}")
-                                d_kyc = acc.kyc_submit_date if acc.kyc_submit_date else datetime.date.today()
-                                n_kyc_d = c1.date_input("วันที่ยื่น KYC", value=d_kyc, key=f"dkyc_{acc.id}")
-
-                                n_btn = c2.selectbox("สถานะปุ่ม", [e.value for e in ButtonStatus], index=list(ButtonStatus).index(acc.button_status), key=f"btn_{acc.id}")
-                                d_btn = acc.button_request_date if acc.button_request_date else datetime.date.today()
-                                n_btn_d = c2.date_input("วันที่ยื่นขอปุ่ม", value=d_btn, key=f"dbtn_{acc.id}")
-
-                                if st.form_submit_button("อัปเดตสถานะ"):
-                                    acc.kyc_status = KYCStatus(n_kyc)
-                                    acc.kyc_submit_date = datetime.datetime.combine(n_kyc_d, datetime.datetime.min.time())
-                                    acc.button_status = ButtonStatus(n_btn)
-                                    acc.button_request_date = datetime.datetime.combine(n_btn_d, datetime.datetime.min.time())
-                                    session.commit()
-                                    st.success("อัปเดตสถานะและวันที่สำเร็จ!")
-                                    time.sleep(0.5)
-                                    st.rerun()
-
-    # --- แท็บ 3: อันดับขายดี ---
-    with tab_ranking:
-        st.header("🏆 จัดอันดับร้านค้า & สินค้าขายดี (Top 20)")
-        col_date1, col_date2 = st.columns(2)
-        start_date = col_date1.date_input("ตั้งแต่หน้า", value=datetime.date.today() - timedelta(days=30))
-        end_date = col_date2.date_input("ถึงวันที่", value=datetime.date.today())
-        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
-        end_dt = datetime.datetime.combine(end_date, datetime.time.max)
-
-        st.divider()
-        col_rank_shop, col_rank_prod = st.columns(2)
-
-        with col_rank_shop:
-            st.subheader("🏪 Top 20 ร้านค้าขายดี")
-            top_shops = session.query(
-                TransactionRecord.shop_name.label('ชื่อร้านค้า'),
-                func.count(TransactionRecord.id).label('จำนวนออเดอร์ (ครั้ง)'),
-                func.sum(TransactionRecord.quantity).label('จำนวนชิ้น'),
-                func.sum(TransactionRecord.commission_amount).label('ค่าคอมรวม')
-            ).filter(
-                TransactionRecord.account_id.in_(viewable_acc_ids),
-                TransactionRecord.created_at >= start_dt, TransactionRecord.created_at <= end_dt,
-                TransactionRecord.shop_name != None, TransactionRecord.shop_name != ""
-            ).group_by(TransactionRecord.shop_name) \
-             .order_by(func.sum(TransactionRecord.commission_amount).desc()).limit(20).all()
-
-            if top_shops:
-                df_shops = pd.DataFrame(top_shops)
-                df_shops['ค่าคอม/ออเดอร์'] = (df_shops['ค่าคอมรวม'] / df_shops['จำนวนออเดอร์ (ครั้ง)']).apply(lambda x: f"฿{x:,.2f}")
-                df_shops['ค่าคอมรวม'] = df_shops['ค่าคอมรวม'].apply(lambda x: f"฿{x:,.2f}")
-                df_shops = df_shops[['ชื่อร้านค้า', 'จำนวนออเดอร์ (ครั้ง)', 'จำนวนชิ้น', 'ค่าคอม/ออเดอร์', 'ค่าคอมรวม']]
-                st.dataframe(df_shops, hide_index=True, use_container_width=True)
-            else:
-                st.info("ไม่มีข้อมูลร้านค้าในช่วงเวลานี้")
-
-        with col_rank_prod:
-            st.subheader("📦 Top 20 สินค้าขายดี")
-            top_products = session.query(
-                TransactionRecord.product_name.label('ชื่อสินค้า'),
-                func.count(TransactionRecord.id).label('จำนวนออเดอร์ (ครั้ง)'),
-                func.sum(TransactionRecord.quantity).label('จำนวนชิ้น'),
-                func.sum(TransactionRecord.commission_amount).label('ค่าคอมรวม')
-            ).filter(
-                TransactionRecord.account_id.in_(viewable_acc_ids),
-                TransactionRecord.created_at >= start_dt, TransactionRecord.created_at <= end_dt,
-                TransactionRecord.product_name != None, TransactionRecord.product_name != ""
-            ).group_by(TransactionRecord.product_name) \
-             .order_by(func.sum(TransactionRecord.commission_amount).desc()).limit(20).all()
-
-            if top_products:
-                df_prods = pd.DataFrame(top_products)
-                df_prods['ค่าคอม/ออเดอร์'] = (df_prods['ค่าคอมรวม'] / df_prods['จำนวนออเดอร์ (ครั้ง)']).apply(lambda x: f"฿{x:,.2f}")
-                df_prods['ค่าคอมรวม'] = df_prods['ค่าคอมรวม'].apply(lambda x: f"฿{x:,.2f}")
-                df_prods = df_prods[['ชื่อสินค้า', 'จำนวนออเดอร์ (ครั้ง)', 'จำนวนชิ้น', 'ค่าคอม/ออเดอร์', 'ค่าคอมรวม']]
-                st.dataframe(df_prods, hide_index=True, use_container_width=True)
-            else:
-                st.info("ไม่มีข้อมูลสินค้าในช่วงเวลานี้")
-
-    # --- แท็บ 4: ตั้งค่า & แชร์ ---
-    with tab_settings:
-        st.header("⚙️ แชร์ข้อมูลและตั้งค่าความปลอดภัย")
-        col_share, col_pin = st.columns(2)
-        
-        with col_share:
-            st.subheader("🤝 แชร์ข้อมูลให้เพื่อน")
-            with st.form("share_form"):
-                friend_username = st.text_input("พิมพ์ Username ของเพื่อน")
-                if st.form_submit_button("อนุญาตให้เพื่อนดูข้อมูล"):
-                    friend = session.query(User).filter_by(username=friend_username).first()
-                    if not friend:
-                        st.error("ไม่พบ Username นี้")
-                    elif friend.id == current_user_id:
-                        st.error("แชร์ให้ตัวเองไม่ได้!")
-                    else:
-                        existing = session.query(SharedAccess).filter_by(owner_id=current_user_id, viewer_id=friend.id).first()
-                        if not existing:
-                            session.add(SharedAccess(owner_id=current_user_id, viewer_id=friend.id))
-                            session.commit()
-                            st.success(f"แชร์ข้อมูลให้ {friend_username} สำเร็จ!")
-                        else:
-                            st.info("แชร์ให้คนนี้ไปแล้ว")
-
-        with col_pin:
-            st.subheader("🗑️ ลบบัญชี & รหัสผ่าน")
-            my_user = session.query(User).filter_by(id=current_user_id).first()
-            
-            with st.form("change_pin_form"):
-                new_pin = st.text_input("ตั้งรหัสลบข้อมูลใหม่", type="password", placeholder=f"รหัสปัจจุบัน: {my_user.delete_pin}")
-                if st.form_submit_button("เปลี่ยนรหัสลบ"):
-                    if new_pin:
-                        my_user.delete_pin = new_pin
-                        session.commit()
-                        st.success("เปลี่ยนรหัสสำเร็จ!")
-            
-            st.divider()
-            if my_accounts:
-                with st.form("delete_acc_form"):
-                    acc_to_delete = st.selectbox("เลือกลบบัญชี:", [a.account_name for a in my_accounts])
-                    input_pin = st.text_input("ใส่รหัสเพื่อยืนยันการลบ*", type="password")
-                    if st.form_submit_button("🚨 ยืนยันการลบ"):
-                        if input_pin == my_user.delete_pin:
-                            acc_obj = session.query(AffiliateAccount).filter_by(account_name=acc_to_delete, user_id=current_user_id).first()
-                            session.delete(acc_obj)
-                            session.commit()
-                            st.success("ลบบัญชีสำเร็จ!")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("รหัสลบไม่ถูกต้อง!")
+                                    if col_s
