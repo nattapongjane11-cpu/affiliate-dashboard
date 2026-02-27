@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -16,7 +15,7 @@ engine = create_engine(db_url, echo=False)
 Base = declarative_base()
 
 # ==========================================
-# 🗄️ 2. สร้างตารางข้อมูลแบบดั้งเดิม (เรียบง่าย)
+# 🗄️ 2. สร้างตารางข้อมูลแบบแรกสุด (ดั้งเดิม)
 # ==========================================
 class User(Base):
     __tablename__ = 'users'
@@ -106,7 +105,7 @@ if not st.session_state['logged_in']:
 else:
     # --- เมนูด้านข้าง ---
     st.sidebar.title(f"👤 ยินดีต้อนรับ {st.session_state['username']}")
-    menu = st.sidebar.radio("📌 เลือกเมนู", ["📊 Dashboard สรุปยอด", "💼 จัดการบัญชี Affiliate", "📝 บันทึกยอดขาย"])
+    menu = st.sidebar.radio("📌 เลือกเมนู", ["💼 จัดการบัญชี Affiliate", "📝 บันทึกยอดขายและดูรายการ"])
     
     if st.sidebar.button("🚪 ออกจากระบบ"):
         st.session_state['logged_in'] = False
@@ -115,54 +114,9 @@ else:
     current_user = session.query(User).get(st.session_state['user_id'])
 
     # ------------------------------------------
-    # เมนูที่ 1: Dashboard แบบดั้งเดิม
+    # เมนูที่ 1: จัดการบัญชีแบบดั้งเดิม
     # ------------------------------------------
-    if menu == "📊 Dashboard สรุปยอด":
-        st.title("📊 สรุปสถิติ Affiliate ของคุณ")
-        
-        # ดึงข้อมูล transaction ทั้งหมดของ user คนนี้
-        accounts = session.query(AffiliateAccount).filter_by(owner_id=current_user.id).all()
-        all_transactions = []
-        for acc in accounts:
-            for t in acc.transactions:
-                all_transactions.append({
-                    "วันที่": t.created_at.strftime("%Y-%m-%d"),
-                    "บัญชี": acc.name,
-                    "ร้านค้า": t.shop_name,
-                    "ชื่อสินค้า": t.product_name,
-                    "จำนวน": t.quantity,
-                    "คอมมิชชัน (฿)": t.commission_amount
-                })
-
-        if all_transactions:
-            df = pd.DataFrame(all_transactions)
-            
-            # โชว์สถิติแบบเรียบง่าย
-            col1, col2, col3 = st.columns(3)
-            col1.metric("ยอดคลิก/รายการทั้งหมด", f"{len(df)} รายการ")
-            col2.metric("จำนวนสินค้าที่ขายได้", f"{df['จำนวน'].sum()} ชิ้น")
-            col3.metric("คอมมิชชันรวมทั้งหมด", f"฿ {df['คอมมิชชัน (฿)'].sum():,.2f}")
-
-            st.markdown("---")
-
-            # กราฟและปุ่มโหลด Excel
-            col_chart, col_dl = st.columns([3, 1])
-            with col_chart:
-                st.markdown("**📈 ยอดคอมมิชชันแยกตามร้านค้า**")
-                shop_summary = df.groupby('ร้านค้า')['คอมมิชชัน (฿)'].sum().reset_index()
-                st.bar_chart(shop_summary.set_index('ร้านค้า'))
-            
-            with col_dl:
-                st.markdown("**📥 ดาวน์โหลดข้อมูล**")
-                csv = df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("โหลดไฟล์ (CSV)", data=csv, file_name='affiliate_summary.csv', mime='text/csv')
-        else:
-            st.info("ยังไม่มีข้อมูลรายการ ให้เพิ่มข้อมูลก่อนเพื่อดูสถิตินะครับ 🚀")
-
-    # ------------------------------------------
-    # เมนูที่ 2: จัดการบัญชีแบบดั้งเดิม
-    # ------------------------------------------
-    elif menu == "💼 จัดการบัญชี Affiliate":
+    if menu == "💼 จัดการบัญชี Affiliate":
         st.title("💼 จัดการบัญชี Affiliate")
         with st.form("add_account_form"):
             acc_name = st.text_input("ชื่อบัญชีใหม่ (เช่น TikTok, FB Page)")
@@ -186,9 +140,9 @@ else:
             st.write("ยังไม่มีบัญชี")
 
     # ------------------------------------------
-    # เมนูที่ 3: บันทึกยอดขาย
+    # เมนูที่ 2: บันทึกยอดขายและดูรายการ
     # ------------------------------------------
-    elif menu == "📝 บันทึกยอดขาย":
+    elif menu == "📝 บันทึกยอดขายและดูรายการ":
         st.title("📝 บันทึกยอดคอมมิชชันใหม่")
         accounts = session.query(AffiliateAccount).filter_by(owner_id=current_user.id).all()
         
@@ -218,5 +172,20 @@ else:
                         session.add(new_trans)
                         session.commit()
                         st.success("✅ บันทึกยอดสำเร็จ!")
+                        st.rerun()
                     else:
                         st.error("กรุณากรอกรหัสคำสั่งซื้อและชื่อสินค้าครับ")
+            
+            st.markdown("---")
+            st.subheader("📋 รายการที่บันทึกไว้")
+            
+            has_records = False
+            for acc in accounts:
+                if acc.transactions:
+                    has_records = True
+                    st.write(f"**บัญชี: {acc.name}**")
+                    for t in acc.transactions:
+                        st.write(f"- 🕒 วันที่: {t.created_at.strftime('%Y-%m-%d')} | สินค้า: {t.product_name} | คอมมิชชัน: ฿{t.commission_amount:,.2f}")
+            
+            if not has_records:
+                st.write("ยังไม่มีประวัติการบันทึกยอดขาย")
