@@ -4,18 +4,32 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 import datetime
 import enum
-import random
 
+# ==========================================
+# 1. ตั้งค่า Database และโครงสร้างใหม่
+# ==========================================
 Base = declarative_base()
 
 class PlatformEnum(enum.Enum):
-    SHOPEE = "shopee"
-    TIKTOK = "tiktok"
+    SHOPEE = "Shopee"
+    TIKTOK = "TikTok"
+
+class KYCStatus(enum.Enum):
+    NONE = "ยังไม่ยื่น"
+    SUBMITTED = "ยื่น KYC"
+    APPROVED = "KYC อนุมัติ"
+    REJECTED = "KYC ไม่อนุมัติ"
+    MORE_DOCS = "ยื่นเอกสารเพิ่ม"
+
+class ButtonStatus(enum.Enum):
+    NONE = "ยังไม่ขอ"
+    REQUESTED = "ยื่นขอปุ่ม"
+    LIVE_HEART = "ได้ปุ่ม Live+หัวใจ"
+    LIVE_ONLY = "ได้แต่ปุ่ม Live"
 
 class OrderStatus(enum.Enum):
     PENDING = "pending"
     APPROVED = "approved"
-    REJECTED = "rejected"
 
 class AffiliateAccount(Base):
     __tablename__ = 'affiliate_accounts'
@@ -23,7 +37,15 @@ class AffiliateAccount(Base):
     account_name = Column(String(100), nullable=False)
     platform = Column(Enum(PlatformEnum), nullable=False)
     affiliate_id = Column(String(100), unique=True, nullable=False)
-    transactions = relationship("TransactionRecord", back_populates="account")
+    
+    # ฟิลด์ใหม่สำหรับเก็บสถานะต่างๆ
+    kyc_status = Column(Enum(KYCStatus), default=KYCStatus.NONE)
+    kyc_submit_date = Column(DateTime, nullable=True) # วันที่ยื่น KYC
+    
+    button_status = Column(Enum(ButtonStatus), default=ButtonStatus.NONE)
+    button_request_date = Column(DateTime, nullable=True) # วันที่ขอปุ่ม
+    
+    transactions = relationship("TransactionRecord", back_populates="account", cascade="all, delete-orphan")
 
 class TransactionRecord(Base):
     __tablename__ = 'transaction_records'
@@ -38,135 +60,189 @@ class TransactionRecord(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     account = relationship("AffiliateAccount", back_populates="transactions")
 
-engine = create_engine('sqlite:///affiliate_farm.db', echo=False)
+# เปลี่ยนชื่อ DB เป็น v2 เพื่อสร้างตารางใหม่ที่มีคอลัมน์ครบถ้วน
+engine = create_engine('sqlite:///affiliate_farm_v2.db', echo=False)
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-# ข้อมูลจำลองร้านค้าและสินค้า
-DUMMY_SHOPS = ["GadgetZ", "HomeDecor Hub", "Beauty Store", "Fashion BKK"]
-DUMMY_PRODUCTS = ["หูฟังบลูทูธ 5.0", "พาวเวอร์แบงค์ 20000mAh", "กล่องเก็บของมินิมอล", "โคมไฟตั้งโต๊ะ LED", "เซรั่มวิตามินซี", "เสื้อยืดโอเวอร์ไซส์"]
+# ==========================================
+# 2. ฟังก์ชันอำนวยความสะดวก
+# ==========================================
+def get_all_accounts():
+    return session.query(AffiliateAccount).all()
 
-def seed_dummy_data():
-    if session.query(AffiliateAccount).count() == 0:
-        acc1 = AffiliateAccount(account_name="Shopee_Main_01", platform=PlatformEnum.SHOPEE, affiliate_id="SHP001")
-        acc2 = AffiliateAccount(account_name="Shopee_Sub_02", platform=PlatformEnum.SHOPEE, affiliate_id="SHP002")
-        session.add_all([acc1, acc2])
-        session.commit()
+def calculate_days_passed(target_date):
+    if not target_date:
+        return 0
+    # แปลง datetime.date ให้เป็น datetime.datetime สำหรับคำนวณ
+    if isinstance(target_date, datetime.date) and not isinstance(target_date, datetime.datetime):
+        target_date = datetime.datetime.combine(target_date, datetime.datetime.min.time())
+    return (datetime.datetime.now() - target_date).days
 
-        # สุ่มสร้างออเดอร์พร้อมระบุชื่อสินค้าและร้านค้า
-        for i in range(80):
-            txn = TransactionRecord(
-                order_id=f"ORD1_{i}", 
-                account_id=acc1.id, 
-                product_name=random.choice(DUMMY_PRODUCTS),
-                shop_name=random.choice(DUMMY_SHOPS),
-                commission_amount=random.uniform(5.0, 20.0), 
-                status=OrderStatus.APPROVED
-            )
-            session.add(txn)
-            
-        for i in range(100):
-            txn = TransactionRecord(
-                order_id=f"ORD2_{i}", 
-                account_id=acc2.id, 
-                product_name=random.choice(DUMMY_PRODUCTS),
-                shop_name=random.choice(DUMMY_SHOPS),
-                commission_amount=random.uniform(5.0, 25.0), 
-                status=OrderStatus.APPROVED
-            )
-            session.add(txn)
-        session.commit()
+# ==========================================
+# 3. ส่วนแสดงผล UI (Streamlit)
+# ==========================================
+st.set_page_config(page_title="Affiliate Farm Pro", layout="wide")
+st.title("💼 Affiliate Farm Management System")
 
-seed_dummy_data()
+# แบ่งหน้าจอเป็น 3 แท็บหลัก
+tab_dashboard, tab_manage, tab_settings = st.tabs(["📊 แดชบอร์ดหลัก", "📝 จัดการสถานะรายบัญชี", "⚙️ เพิ่ม/ลบบัญชี"])
 
-# ==========================
-# ส่วนของหน้า Dashboard (UI)
-# ==========================
-st.set_page_config(page_title="Affiliate Farm Dashboard", layout="wide")
-
-# 1. สร้าง Sidebar เมนูด้านซ้ายมือสำหรับ Filter เลือกบัญชี
-st.sidebar.header("⚙️ ตัวกรองข้อมูล (Filter)")
-all_accounts = session.query(AffiliateAccount.account_name).all()
-account_list = ["ดูทุกบัญชีรวมกัน"] + [acc[0] for acc in all_accounts]
-selected_account = st.sidebar.selectbox("🔍 เลือกบัญชีที่ต้องการดู:", account_list)
-
-st.title("📊 Affiliate Farm Dashboard")
-st.markdown(f"**กำลังแสดงข้อมูลสำหรับ:** `{selected_account}`")
-st.divider()
-
-TARGET_COMMISSION = 500.0
-TARGET_ORDERS = 90
-
-# สร้าง Query สรุปยอดรวม (ดึงตามบัญชีที่เลือก)
-summary_query = session.query(
-    AffiliateAccount.account_name,
-    func.sum(TransactionRecord.commission_amount).label('total_commission'),
-    func.count(TransactionRecord.id).label('total_orders')
-).outerjoin(TransactionRecord)
-
-if selected_account != "ดูทุกบัญชีรวมกัน":
-    summary_query = summary_query.filter(AffiliateAccount.account_name == selected_account)
-
-results = summary_query.group_by(AffiliateAccount.id).all()
-
-# 2. แสดงผลหลอด Progress Bar
-for row in results:
-    acc_name = row.account_name
-    comm = row.total_commission or 0.0
-    orders = row.total_orders or 0
+# ------------------------------------------
+# แท็บ 1: แดชบอร์ดหลัก (สรุปภาพรวมทั้งหมด)
+# ------------------------------------------
+with tab_dashboard:
+    st.header("📈 สรุปภาพรวมฟาร์มบัญชี")
     
-    st.subheader(f"🛒 สรุปเป้าหมายบัญชี: {acc_name}")
-    col1, col2 = st.columns(2)
+    accounts = get_all_accounts()
+    total_accounts = len(accounts)
     
-    with col1:
-        comm_percent = min(comm / TARGET_COMMISSION, 1.0)
-        if comm >= TARGET_COMMISSION:
-            st.metric(label="ยอดคอมมิชชั่นสะสม (บาท)", value=f"฿{comm:,.2f}", delta="🎉 ทะลุเป้าหมายแล้ว!")
-        else:
-            st.metric(label="ยอดคอมมิชชั่นสะสม (บาท)", value=f"฿{comm:,.2f}", delta=f"- ฿{TARGET_COMMISSION - comm:,.2f} (ขาดอีก)", delta_color="inverse")
-        st.progress(comm_percent)
+    # --- คำนวณยอดเงินและออเดอร์อัตโนมัติ ---
+    account_stats = session.query(
+        AffiliateAccount.id,
+        func.sum(TransactionRecord.commission_amount).label('total_comm'),
+        func.count(TransactionRecord.id).label('total_orders')
+    ).outerjoin(TransactionRecord).group_by(AffiliateAccount.id).all()
 
-    with col2:
-        order_percent = min(orders / TARGET_ORDERS, 1.0)
-        if orders >= TARGET_ORDERS:
-            st.metric(label="จำนวนออเดอร์สะสม", value=f"{orders} ออเดอร์", delta="🎉 ทะลุเป้าหมายแล้ว!")
-        else:
-            st.metric(label="จำนวนออเดอร์สะสม", value=f"{orders} ออเดอร์", delta=f"- {TARGET_ORDERS - orders} ออเดอร์ (ขาดอีก)", delta_color="inverse")
-        st.progress(order_percent)
+    acc_500_baht = sum(1 for stat in account_stats if (stat.total_comm or 0) >= 500)
+    acc_90_orders = sum(1 for stat in account_stats if (stat.total_orders or 0) >= 90)
+    
+    # --- คำนวณสถานะ KYC และ ปุ่ม ---
+    kyc_submitted = sum(1 for a in accounts if a.kyc_status == KYCStatus.SUBMITTED)
+    kyc_approved = sum(1 for a in accounts if a.kyc_status == KYCStatus.APPROVED)
+    kyc_rejected = sum(1 for a in accounts if a.kyc_status == KYCStatus.REJECTED)
+    kyc_more_docs = sum(1 for a in accounts if a.kyc_status == KYCStatus.MORE_DOCS)
+    
+    btn_requested = sum(1 for a in accounts if a.button_status == ButtonStatus.REQUESTED)
+    btn_live_heart = sum(1 for a in accounts if a.button_status == ButtonStatus.LIVE_HEART)
+    btn_live_only = sum(1 for a in accounts if a.button_status == ButtonStatus.LIVE_ONLY)
+    
+    # --- คำนวณการเร่ง (เกิน 15 วัน) ---
+    expedite_kyc = sum(1 for a in accounts if a.kyc_status == KYCStatus.SUBMITTED and calculate_days_passed(a.kyc_submit_date) >= 15)
+    expedite_btn = sum(1 for a in accounts if a.button_status == ButtonStatus.REQUESTED and calculate_days_passed(a.button_request_date) >= 15)
+
+    # วาดหน้าจอ Dashboard สวยๆ แบ่งเป็นกล่องๆ
+    col1, col2, col3 = st.columns(3)
+    col1.metric("📌 จำนวนบัญชีทั้งหมด", f"{total_accounts} บัญชี")
+    col2.metric("🎯 บัญชีที่ค่าคอมครบ 500 บาท", f"{acc_500_baht} บัญชี", "สำเร็จอัตโนมัติ")
+    col3.metric("📦 บัญชีที่ครบ 90 ออเดอร์", f"{acc_90_orders} บัญชี", "สำเร็จอัตโนมัติ")
+    
+    st.divider()
+    
+    col4, col5 = st.columns(2)
+    with col4:
+        st.subheader("🛡️ สถานะ KYC")
+        st.info(f"ยื่น KYC แล้ว: **{kyc_submitted}** บัญชี")
+        st.success(f"KYC อนุมัติ: **{kyc_approved}** บัญชี")
+        st.error(f"KYC ไม่อนุมัติ: **{kyc_rejected}** บัญชี")
+        st.warning(f"ยื่นเอกสารเพิ่ม: **{kyc_more_docs}** บัญชี")
         
-    st.markdown("<br>", unsafe_allow_html=True) # เว้นบรรทัดนิดนึง
+    with col5:
+        st.subheader("🔴 สถานะขอปุ่ม Live")
+        st.info(f"ยื่นขอปุ่ม: **{btn_requested}** บัญชี")
+        st.success(f"ได้ปุ่ม Live + หัวใจ: **{btn_live_heart}** บัญชี")
+        st.warning(f"ได้แต่ปุ่ม Live: **{btn_live_only}** บัญชี")
+        
+    st.divider()
+    st.subheader("🚨 แจ้งเตือน: บัญชีที่ต้องติดตามด่วน (เกิน 15 วัน)")
+    col6, col7 = st.columns(2)
+    col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
+    col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
 
-st.divider()
 
-# 3. ตารางจัดอันดับสินค้า/ร้านค้าขายดี (Ranking)
-st.subheader("🏆 จัดอันดับสินค้าและร้านค้าทำเงิน (Top Performers)")
-st.markdown("ข้อมูลสินค้าที่สร้างค่าคอมมิชชั่นให้คุณมากที่สุด เอาไปใช้ทำคอนเทนต์ต่อได้เลย!")
-
-# Query ข้อมูลเพื่อจัดอันดับ
-rank_query = session.query(
-    TransactionRecord.shop_name.label('ร้านค้า (Shop)'),
-    TransactionRecord.product_name.label('ชื่อสินค้า (Product)'),
-    func.count(TransactionRecord.id).label('จำนวนออเดอร์'),
-    func.sum(TransactionRecord.commission_amount).label('ค่าคอมมิชชั่นรวม (บาท)')
-).join(AffiliateAccount)
-
-# กรองข้อมูลตารางตามที่เลือกใน Sidebar
-if selected_account != "ดูทุกบัญชีรวมกัน":
-    rank_query = rank_query.filter(AffiliateAccount.account_name == selected_account)
-
-# จัดกลุ่มตามร้านและสินค้า เรียงตามค่าคอมจากมากไปน้อย (desc)
-top_performers = rank_query.group_by(TransactionRecord.shop_name, TransactionRecord.product_name) \
-                           .order_by(func.sum(TransactionRecord.commission_amount).desc()) \
-                           .all()
-
-# นำข้อมูลมาแสดงเป็นตารางสวยๆ
-if top_performers:
-    df_ranking = pd.DataFrame(top_performers)
-    # จัด Format ให้ดูเป็นเงินบาทสวยๆ
-    df_ranking['ค่าคอมมิชชั่นรวม (บาท)'] = df_ranking['ค่าคอมมิชชั่นรวม (บาท)'].apply(lambda x: f"฿{x:,.2f}")
+# ------------------------------------------
+# แท็บ 2: จัดการสถานะรายบัญชี (อัปเดตข้อมูล)
+# ------------------------------------------
+with tab_manage:
+    st.header("📝 อัปเดตสถานะรายบัญชี")
+    accounts = get_all_accounts()
     
-    # แสดงตารางแบบเต็มจอ
-    st.dataframe(df_ranking, use_container_width=True, hide_index=True)
-else:
-    st.info("ยังไม่มีข้อมูลการขายสำหรับบัญชีนี้ครับ")
+    if not accounts:
+        st.info("ยังไม่มีบัญชีในระบบ กรุณาไปที่แท็บ 'เพิ่ม/ลบบัญชี'")
+    else:
+        # เลือกบัญชีที่จะแก้ไข
+        account_names = [acc.account_name for acc in accounts]
+        selected_acc_name = st.selectbox("🔍 เลือกบัญชีที่ต้องการอัปเดต:", account_names)
+        
+        # ดึงข้อมูลบัญชีที่เลือกมาแสดง
+        target_acc = session.query(AffiliateAccount).filter_by(account_name=selected_acc_name).first()
+        
+        with st.form("update_status_form"):
+            st.markdown(f"**กำลังแก้ไขบัญชี:** `{target_acc.account_name}` ({target_acc.platform.value})")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write("**สถานะ KYC**")
+                new_kyc_status = st.selectbox("เลือกสถานะ KYC:", [e.value for e in KYCStatus], index=list(KYCStatus).index(target_acc.kyc_status))
+                # จัดการวันที่ (ถ้ามีค่าให้แสดงค่านั้น ถ้าไม่มีให้ใช้วันนี้)
+                default_kyc_date = target_acc.kyc_submit_date if target_acc.kyc_submit_date else datetime.date.today()
+                new_kyc_date = st.date_input("วันที่ยื่น KYC:", value=default_kyc_date)
+                
+            with c2:
+                st.write("**สถานะปุ่ม Live**")
+                new_btn_status = st.selectbox("เลือกสถานะปุ่ม:", [e.value for e in ButtonStatus], index=list(ButtonStatus).index(target_acc.button_status))
+                default_btn_date = target_acc.button_request_date if target_acc.button_request_date else datetime.date.today()
+                new_btn_date = st.date_input("วันที่ยื่นขอปุ่ม:", value=default_btn_date)
+            
+            submit_update = st.form_submit_button("💾 บันทึกการอัปเดต")
+            
+            if submit_update:
+                # อัปเดตข้อมูลลง Database
+                target_acc.kyc_status = KYCStatus(new_kyc_status)
+                target_acc.kyc_submit_date = datetime.datetime.combine(new_kyc_date, datetime.datetime.min.time())
+                target_acc.button_status = ButtonStatus(new_btn_status)
+                target_acc.button_request_date = datetime.datetime.combine(new_btn_date, datetime.datetime.min.time())
+                
+                session.commit()
+                st.success("อัปเดตข้อมูลสำเร็จ! (กรุณารีเฟรชหน้าเว็บหรือเปลี่ยนแท็บเพื่อดูข้อมูลใหม่)")
+
+# ------------------------------------------
+# แท็บ 3: ตั้งค่า เพิ่ม/ลบ บัญชี
+# ------------------------------------------
+with tab_settings:
+    col_add, col_del = st.columns(2)
+    
+    with col_add:
+        st.header("➕ เพิ่มบัญชีใหม่")
+        with st.form("add_account_form", clear_on_submit=True):
+            new_name = st.text_input("ชื่อบัญชี (Account Name)*")
+            new_platform = st.selectbox("แพลตฟอร์ม", ["Shopee", "TikTok"])
+            new_aff_id = st.text_input("Affiliate ID / รหัสอ้างอิง*")
+            
+            submit_add = st.form_submit_button("บันทึกบัญชีใหม่")
+            if submit_add:
+                if new_name and new_aff_id:
+                    # เช็คว่า ID ซ้ำไหม
+                    exists = session.query(AffiliateAccount).filter_by(affiliate_id=new_aff_id).first()
+                    if exists:
+                        st.error("รหัส Affiliate ID นี้มีในระบบแล้ว!")
+                    else:
+                        new_acc = AffiliateAccount(
+                            account_name=new_name,
+                            platform=PlatformEnum(new_platform),
+                            affiliate_id=new_aff_id
+                        )
+                        session.add(new_acc)
+                        session.commit()
+                        st.success(f"เพิ่มบัญชี {new_name} สำเร็จ!")
+                else:
+                    st.error("กรุณากรอกชื่อบัญชีและ Affiliate ID ให้ครบถ้วน")
+                    
+    with col_del:
+        st.header("🗑️ ลบบัญชี")
+        accounts = get_all_accounts()
+        if accounts:
+            with st.form("delete_account_form"):
+                acc_to_delete = st.selectbox("เลือบัญชีที่ต้องการลบ (ลบแล้วกู้คืนไม่ได้):", [acc.account_name for acc in accounts])
+                delete_pin = st.text_input("รหัสยืนยันการลบ*", type="password", placeholder="ใส่รหัสผ่านเพื่อลบ")
+                
+                submit_delete = st.form_submit_button("🚨 ยืนยันการลบบัญชี")
+                if submit_delete:
+                    if delete_pin == "062531":
+                        acc_obj = session.query(AffiliateAccount).filter_by(account_name=acc_to_delete).first()
+                        session.delete(acc_obj)
+                        session.commit()
+                        st.success(f"ลบบัญชี {acc_to_delete} สำเร็จเรียบร้อยแล้ว!")
+                    else:
+                        st.error("รหัสผ่านไม่ถูกต้อง! ไม่อนุญาตให้ลบ")
