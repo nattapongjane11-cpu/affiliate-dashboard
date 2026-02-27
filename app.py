@@ -48,17 +48,6 @@ class TransactionRecord(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     account = relationship("AffiliateAccount", back_populates="transactions")
 
-# --- โค้ดสำหรับบังคับล้างตารางเก่า (ใส่ชั่วคราว) ---
-from sqlalchemy import text
-try:
-    with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS transaction_records CASCADE;"))
-        conn.execute(text("DROP TABLE IF EXISTS affiliate_accounts CASCADE;"))
-        conn.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
-except:
-    pass
-# ---------------------------------------------
-
 # สร้างตารางในฐานข้อมูล (ให้บรรทัดนี้อยู่ต่อท้ายโค้ดด้านบนนะครับ)
 Base.metadata.create_all(engine)
 # สร้างตารางในฐานข้อมูล (ถ้ายังไม่มี)
