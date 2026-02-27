@@ -184,4 +184,156 @@ with tab_dashboard:
     with col5:
         st.subheader("🔴 สถานะขอปุ่ม Live")
         st.info(f"ยื่นขอปุ่ม: **{btn_requested}** บัญชี")
-        st.success(f"ได้ปุ่ม Live + หัวใจ: **{btn_live_heart}** บัญชี
+        st.success(f"ได้ปุ่ม Live + หัวใจ: **{btn_live_heart}** บัญชี")
+        st.warning(f"ได้แต่ปุ่ม Live: **{btn_live_only}** บัญชี")
+        
+    st.divider()
+    st.subheader("🚨 แจ้งเตือน: บัญชีที่ต้องติดตามด่วน (เกิน 15 วัน)")
+    col6, col7 = st.columns(2)
+    col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
+    col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
+
+# ------------------------------------------
+# แท็บ 2 & 3: จัดการสถานะ และ ตั้งค่า (เหมือนเดิม)
+# ------------------------------------------
+with tab_manage:
+    st.header("📝 อัปเดตสถานะรายบัญชี")
+    # ... (ส่วนจัดการสถานะเหมือนโค้ดชุดก่อนหน้า)
+    accounts = get_all_accounts()
+    if accounts:
+        account_names = [acc.account_name for acc in accounts]
+        selected_acc_name = st.selectbox("🔍 เลือกบัญชีที่ต้องการอัปเดต:", account_names)
+        target_acc = session.query(AffiliateAccount).filter_by(account_name=selected_acc_name).first()
+        with st.form("update_status_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                new_kyc_status = st.selectbox("เลือกสถานะ KYC:", [e.value for e in KYCStatus], index=list(KYCStatus).index(target_acc.kyc_status))
+                default_kyc_date = target_acc.kyc_submit_date if target_acc.kyc_submit_date else datetime.date.today()
+                new_kyc_date = st.date_input("วันที่ยื่น KYC:", value=default_kyc_date)
+            with c2:
+                new_btn_status = st.selectbox("เลือกสถานะปุ่ม:", [e.value for e in ButtonStatus], index=list(ButtonStatus).index(target_acc.button_status))
+                default_btn_date = target_acc.button_request_date if target_acc.button_request_date else datetime.date.today()
+                new_btn_date = st.date_input("วันที่ยื่นขอปุ่ม:", value=default_btn_date)
+            if st.form_submit_button("💾 บันทึกการอัปเดต"):
+                target_acc.kyc_status = KYCStatus(new_kyc_status)
+                target_acc.kyc_submit_date = datetime.datetime.combine(new_kyc_date, datetime.datetime.min.time())
+                target_acc.button_status = ButtonStatus(new_btn_status)
+                target_acc.button_request_date = datetime.datetime.combine(new_btn_date, datetime.datetime.min.time())
+                session.commit()
+                st.success("อัปเดตข้อมูลสำเร็จ!")
+
+with tab_settings:
+    col_add, col_del = st.columns(2)
+    with col_add:
+        st.header("➕ เพิ่มบัญชีใหม่")
+        with st.form("add_account_form", clear_on_submit=True):
+            new_name = st.text_input("ชื่อบัญชี (Account Name)*")
+            new_platform = st.selectbox("แพลตฟอร์ม", ["Shopee", "TikTok"])
+            new_aff_id = st.text_input("Affiliate ID / รหัสอ้างอิง*")
+            if st.form_submit_button("บันทึกบัญชีใหม่"):
+                if new_name and new_aff_id:
+                    if not session.query(AffiliateAccount).filter_by(affiliate_id=new_aff_id).first():
+                        session.add(AffiliateAccount(account_name=new_name, platform=PlatformEnum(new_platform), affiliate_id=new_aff_id))
+                        session.commit()
+                        st.success(f"เพิ่มบัญชีสำเร็จ!")
+                    else:
+                        st.error("รหัสนี้มีในระบบแล้ว!")
+    with col_del:
+        st.header("🗑️ ลบบัญชี")
+        accounts = get_all_accounts()
+        if accounts:
+            with st.form("delete_account_form"):
+                acc_to_delete = st.selectbox("เลือกบัญชีที่ต้องการลบ:", [acc.account_name for acc in accounts])
+                delete_pin = st.text_input("รหัสยืนยันการลบ*", type="password")
+                if st.form_submit_button("🚨 ยืนยันการลบบัญชี"):
+                    if delete_pin == "062531":
+                        acc_obj = session.query(AffiliateAccount).filter_by(account_name=acc_to_delete).first()
+                        session.delete(acc_obj)
+                        session.commit()
+                        st.success("ลบบัญชีสำเร็จ!")
+                    else:
+                        st.error("รหัสผ่านไม่ถูกต้อง!")
+
+# ------------------------------------------
+# แท็บ 4: 🏆 สถิติร้านค้าและสินค้าขายดี (ระบบใหม่!)
+# ------------------------------------------
+with tab_ranking:
+    st.header("🏆 จัดอันดับ 20 ร้านค้า & สินค้าขายดี")
+    st.markdown("วิเคราะห์ทิศทางสินค้าเพื่อนำไปทำคอนเทนต์ต่อ")
+    
+    # --- ตัวกรองช่วงเวลา ---
+    st.subheader("📅 เลือกช่วงเวลาที่ต้องการดู")
+    col_date1, col_date2 = st.columns(2)
+    # ค่าเริ่มต้นคือดูย้อนหลัง 30 วัน
+    start_date = col_date1.date_input("ตั้งแต่หน้า", value=datetime.date.today() - timedelta(days=30))
+    end_date = col_date2.date_input("ถึงวันที่", value=datetime.date.today())
+    
+    # แปลงวันที่เพื่อใช้ดึงใน Database
+    start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+    end_dt = datetime.datetime.combine(end_date, datetime.time.max)
+
+    st.divider()
+    col_rank_shop, col_rank_prod = st.columns(2)
+
+    # === 1. TOP 20 ร้านค้าขายดี ===
+    with col_rank_shop:
+        st.subheader("🏪 Top 20 ร้านค้าขายดี")
+        top_shops = session.query(
+            TransactionRecord.shop_name.label('ชื่อร้านค้า'),
+            TransactionRecord.shop_link.label('ลิงก์ร้านค้า'),
+            func.count(TransactionRecord.id).label('จำนวนขายได้ (ครั้ง)'),
+            func.sum(TransactionRecord.commission_amount).label('ค่าคอมรวม')
+        ).filter(
+            TransactionRecord.created_at >= start_dt,
+            TransactionRecord.created_at <= end_dt,
+            TransactionRecord.shop_name != None
+        ).group_by(TransactionRecord.shop_name, TransactionRecord.shop_link) \
+         .order_by(func.count(TransactionRecord.id).desc()).limit(20).all()
+
+        if top_shops:
+            df_shops = pd.DataFrame(top_shops)
+            df_shops['ค่าคอมรวม'] = df_shops['ค่าคอมรวม'].apply(lambda x: f"฿{x:,.2f}")
+            
+            # ตั้งค่าให้คอลัมน์ลิงก์ สามารถคลิกเปิดแท็บใหม่ได้
+            st.dataframe(
+                df_shops,
+                column_config={
+                    "ลิงก์ร้านค้า": st.column_config.LinkColumn("🔗 ลิงก์ร้านค้า (คลิก)"),
+                    "จำนวนขายได้ (ครั้ง)": st.column_config.NumberColumn("ยอดขาย (ชิ้น)"),
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("ไม่มีข้อมูลการขายร้านค้าในช่วงเวลานี้")
+
+    # === 2. TOP 20 สินค้าขายดี ===
+    with col_rank_prod:
+        st.subheader("📦 Top 20 สินค้าขายดี")
+        top_products = session.query(
+            TransactionRecord.product_name.label('ชื่อสินค้า'),
+            TransactionRecord.product_link.label('ลิงก์สินค้า'),
+            func.count(TransactionRecord.id).label('จำนวนขายได้ (ครั้ง)'),
+            func.sum(TransactionRecord.commission_amount).label('ค่าคอมรวม')
+        ).filter(
+            TransactionRecord.created_at >= start_dt,
+            TransactionRecord.created_at <= end_dt,
+            TransactionRecord.product_name != None
+        ).group_by(TransactionRecord.product_name, TransactionRecord.product_link) \
+         .order_by(func.count(TransactionRecord.id).desc()).limit(20).all()
+
+        if top_products:
+            df_prods = pd.DataFrame(top_products)
+            df_prods['ค่าคอมรวม'] = df_prods['ค่าคอมรวม'].apply(lambda x: f"฿{x:,.2f}")
+            
+            st.dataframe(
+                df_prods,
+                column_config={
+                    "ลิงก์สินค้า": st.column_config.LinkColumn("🔗 ลิงก์สินค้า (คลิก)"),
+                    "จำนวนขายได้ (ครั้ง)": st.column_config.NumberColumn("ยอดขาย (ชิ้น)"),
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("ไม่มีข้อมูลการขายสินค้าในช่วงเวลานี้")
