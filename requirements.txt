@@ -1,4 +1,4 @@
 streamlit
-pandas
-SQLAlchemy 
+SQLAlchemy
 psycopg2-binary
+pandas
