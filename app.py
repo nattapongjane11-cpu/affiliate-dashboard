@@ -3,7 +3,6 @@ import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum, func
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 import datetime
-from datetime import timedelta
 import enum
 
 # ==========================================
@@ -28,17 +27,14 @@ class ButtonStatus(enum.Enum):
     LIVE_HEART = "ได้ปุ่ม Live+หัวใจ"
     LIVE_ONLY = "ได้แต่ปุ่ม Live"
 
-# ตารางผู้ใช้งานระบบ
 class User(Base):
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True)
     username = Column(String(50), unique=True, nullable=False)
     password = Column(String(100), nullable=False) 
-    delete_pin = Column(String(10), default="062531") # รหัสผ่านสำหรับลบ (ตั้งค่าเองได้)
-    
+    delete_pin = Column(String(10), default="062531")
     accounts = relationship("AffiliateAccount", back_populates="owner", cascade="all, delete-orphan")
 
-# ตารางเก็บสิทธิ์การแชร์ข้อมูล
 class SharedAccess(Base):
     __tablename__ = 'shared_access'
     id = Column(Integer, primary_key=True)
@@ -48,7 +44,7 @@ class SharedAccess(Base):
 class AffiliateAccount(Base):
     __tablename__ = 'affiliate_accounts'
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False) # ผูกบัญชีกับ User
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     account_name = Column(String(100), nullable=False)
     platform = Column(Enum(PlatformEnum), nullable=False)
     affiliate_id = Column(String(100), nullable=False)
@@ -61,18 +57,15 @@ class AffiliateAccount(Base):
     owner = relationship("User", back_populates="accounts")
     transactions = relationship("TransactionRecord", back_populates="account", cascade="all, delete-orphan")
 
-# ตารางยอดขาย (ปรับให้เรียบง่ายขึ้นตามต้องการ)
 class TransactionRecord(Base):
     __tablename__ = 'transaction_records'
     id = Column(Integer, primary_key=True)
     order_id = Column(String(100), nullable=False)
     account_id = Column(Integer, ForeignKey('affiliate_accounts.id'))
-    
-    item_name = Column(String(255)) # เก็บแค่ชื่อ/อ้างอิง
-    quantity = Column(Integer, default=1) # จำนวนที่ขายได้
-    commission_amount = Column(Float, default=0.0) # ค่าคอมมิชชั่น
+    item_name = Column(String(255)) 
+    quantity = Column(Integer, default=1) 
+    commission_amount = Column(Float, default=0.0) 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
     account = relationship("AffiliateAccount", back_populates="transactions")
 
 engine = create_engine('sqlite:///affiliate_farm_v4.db', echo=False)
@@ -81,7 +74,7 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 # ==========================================
-# 2. ฟังก์ชันระบบ Session และ User
+# 2. ฟังก์ชันระบบ Session และคำนวณวัน
 # ==========================================
 st.set_page_config(page_title="Affiliate Farm Pro (SaaS)", layout="wide")
 
@@ -96,12 +89,9 @@ def calculate_days_passed(target_date):
         target_date = datetime.datetime.combine(target_date, datetime.datetime.min.time())
     return (datetime.datetime.now() - target_date).days
 
-# ดึงบัญชีที่เป็นของ User ปัจจุบัน + บัญชีที่เพื่อนแชร์มาให้
 def get_viewable_accounts(current_user_id):
-    # หา ID ของคนที่แชร์ข้อมูลให้เรา
     shared_owners = session.query(SharedAccess.owner_id).filter_by(viewer_id=current_user_id).all()
     owner_ids = [current_user_id] + [so[0] for so in shared_owners]
-    
     return session.query(AffiliateAccount).filter(AffiliateAccount.user_id.in_(owner_ids)).all()
 
 # ==========================================
@@ -109,7 +99,6 @@ def get_viewable_accounts(current_user_id):
 # ==========================================
 if not st.session_state['logged_in']:
     st.title("🔐 เข้าสู่ระบบ Affiliate Farm")
-    
     tab_login, tab_register = st.tabs(["เข้าสู่ระบบ", "สมัครสมาชิกใหม่"])
     
     with tab_login:
@@ -135,8 +124,7 @@ if not st.session_state['logged_in']:
                     if session.query(User).filter_by(username=reg_user).first():
                         st.error("Username นี้มีคนใช้แล้ว!")
                     else:
-                        new_user = User(username=reg_user, password=reg_pass)
-                        session.add(new_user)
+                        session.add(User(username=reg_user, password=reg_pass))
                         session.commit()
                         st.success("สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ")
                 else:
@@ -149,7 +137,6 @@ else:
     current_user_id = st.session_state['user_id']
     current_username = st.session_state['username']
     
-    # เมนูด้านซ้ายสำหรับ Logout
     st.sidebar.markdown(f"👤 ยินดีต้อนรับ, **{current_username}**")
     if st.sidebar.button("🚪 ล็อกเอาท์"):
         st.session_state['logged_in'] = False
@@ -166,7 +153,7 @@ else:
     viewable_accounts = get_viewable_accounts(current_user_id)
     viewable_acc_ids = [a.id for a in viewable_accounts]
 
-    # --- แท็บ 1: แดชบอร์ด ---
+    # --- แท็บ 1: แดชบอร์ดหลัก (จัดเต็มกลับมาแล้ว!) ---
     with tab_dashboard:
         st.header("📈 สรุปภาพรวมฟาร์มบัญชีของคุณ")
         if not viewable_accounts:
@@ -174,24 +161,55 @@ else:
         else:
             total_accounts = len(viewable_accounts)
             
-            # คำนวณยอดเงินและออเดอร์
             account_stats = session.query(
                 AffiliateAccount.id,
                 func.sum(TransactionRecord.commission_amount).label('total_comm'),
-                func.sum(TransactionRecord.quantity).label('total_qty') # เปลี่ยนมานับจำนวนชิ้นรวม
+                func.sum(TransactionRecord.quantity).label('total_qty') 
             ).outerjoin(TransactionRecord).filter(AffiliateAccount.id.in_(viewable_acc_ids)).group_by(AffiliateAccount.id).all()
 
             acc_500_baht = sum(1 for stat in account_stats if (stat.total_comm or 0) >= 500)
-            
-            # สมมติเงื่อนไข 90 ออเดอร์ คือ 90 ชิ้นที่ขายได้
             acc_90_orders = sum(1 for stat in account_stats if (stat.total_qty or 0) >= 90)
             
+            # นับสถานะทั้งหมดจาก viewable_accounts
+            kyc_submitted = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.SUBMITTED)
+            kyc_approved = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.APPROVED)
+            kyc_rejected = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.REJECTED)
+            kyc_more_docs = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.MORE_DOCS)
+            
+            btn_requested = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.REQUESTED)
+            btn_live_heart = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.LIVE_HEART)
+            btn_live_only = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.LIVE_ONLY)
+            
+            expedite_kyc = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.SUBMITTED and calculate_days_passed(a.kyc_submit_date) >= 15)
+            expedite_btn = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.REQUESTED and calculate_days_passed(a.button_request_date) >= 15)
+
             col1, col2, col3 = st.columns(3)
             col1.metric("📌 จำนวนบัญชีทั้งหมด", f"{total_accounts} บัญชี")
             col2.metric("🎯 บัญชีที่ค่าคอมครบ 500 บาท", f"{acc_500_baht} บัญชี")
             col3.metric("📦 บัญชีที่ขายครบ 90 ชิ้น", f"{acc_90_orders} บัญชี")
+            
+            st.divider()
+            col4, col5 = st.columns(2)
+            with col4:
+                st.subheader("🛡️ สถานะ KYC")
+                st.info(f"ยื่น KYC แล้ว: **{kyc_submitted}** บัญชี")
+                st.success(f"KYC อนุมัติ: **{kyc_approved}** บัญชี")
+                st.error(f"KYC ไม่อนุมัติ: **{kyc_rejected}** บัญชี")
+                st.warning(f"ยื่นเอกสารเพิ่ม: **{kyc_more_docs}** บัญชี")
+                
+            with col5:
+                st.subheader("🔴 สถานะขอปุ่ม Live")
+                st.info(f"ยื่นขอปุ่ม: **{btn_requested}** บัญชี")
+                st.success(f"ได้ปุ่ม Live + หัวใจ: **{btn_live_heart}** บัญชี")
+                st.warning(f"ได้แต่ปุ่ม Live: **{btn_live_only}** บัญชี")
+                
+            st.divider()
+            st.subheader("🚨 แจ้งเตือน: บัญชีที่ต้องติดตามด่วน (เกิน 15 วัน)")
+            col6, col7 = st.columns(2)
+            col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
+            col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
 
-    # --- แท็บ 2: บันทึกยอดขาย (แบบเรียบง่าย) ---
+    # --- แท็บ 2: บันทึกยอดขายแบบเรียบง่าย ---
     with tab_txns:
         st.header("📥 บันทึกจำนวนที่ขายได้และค่าคอม")
         if viewable_accounts:
@@ -210,19 +228,16 @@ else:
                         if not acc:
                             st.error("คุณไม่สามารถเพิ่มยอดเข้าบัญชีที่ถูกแชร์มาให้ได้ (เพิ่มได้เฉพาะบัญชีตัวเอง)")
                         else:
-                            txn = TransactionRecord(
-                                order_id=order_id, account_id=acc.id,
-                                item_name=item_name, quantity=qty, commission_amount=comm
-                            )
+                            txn = TransactionRecord(order_id=order_id, account_id=acc.id, item_name=item_name, quantity=qty, commission_amount=comm)
                             session.add(txn)
                             session.commit()
-                            st.success(f"บันทึกยอดขาย {qty} ชิ้น ค่าคอม {comm} บาท สำเร็จ!")
+                            st.success(f"บันทึกยอดขายสำเร็จ!")
                     else:
                         st.error("กรุณากรอกข้อมูลให้ครบถ้วน")
         else:
             st.warning("ยังไม่มีบัญชีให้บันทึกยอด")
 
-    # --- แท็บ 3: จัดการสถานะ (ตัดมาเฉพาะส่วนสำคัญ) ---
+    # --- แท็บ 3: จัดการสถานะ (คื่นชีพฟอร์มวันที่ให้ด้วย) ---
     with tab_manage:
          st.header("📝 อัปเดตสถานะรายบัญชี")
          my_accounts = [a for a in viewable_accounts if a.user_id == current_user_id]
@@ -234,17 +249,25 @@ else:
              with st.form("update_kyc_form"):
                  c1, c2 = st.columns(2)
                  with c1:
-                     new_kyc_status = st.selectbox("สถานะ KYC:", [e.value for e in KYCStatus], index=list(KYCStatus).index(target_acc.kyc_status))
+                     st.markdown("**สถานะ KYC**")
+                     new_kyc_status = st.selectbox("เลือกสถานะ:", [e.value for e in KYCStatus], index=list(KYCStatus).index(target_acc.kyc_status))
+                     default_kyc_date = target_acc.kyc_submit_date if target_acc.kyc_submit_date else datetime.date.today()
+                     new_kyc_date = st.date_input("วันที่ยื่น KYC:", value=default_kyc_date)
                  with c2:
-                     new_btn_status = st.selectbox("สถานะปุ่ม Live:", [e.value for e in ButtonStatus], index=list(ButtonStatus).index(target_acc.button_status))
+                     st.markdown("**สถานะปุ่ม Live**")
+                     new_btn_status = st.selectbox("เลือกสถานะ:", [e.value for e in ButtonStatus], index=list(ButtonStatus).index(target_acc.button_status))
+                     default_btn_date = target_acc.button_request_date if target_acc.button_request_date else datetime.date.today()
+                     new_btn_date = st.date_input("วันที่ยื่นขอปุ่ม:", value=default_btn_date)
                  
-                 if st.form_submit_button("บันทึกสถานะ"):
+                 if st.form_submit_button("💾 บันทึกการอัปเดต"):
                      target_acc.kyc_status = KYCStatus(new_kyc_status)
+                     target_acc.kyc_submit_date = datetime.datetime.combine(new_kyc_date, datetime.datetime.min.time())
                      target_acc.button_status = ButtonStatus(new_btn_status)
+                     target_acc.button_request_date = datetime.datetime.combine(new_btn_date, datetime.datetime.min.time())
                      session.commit()
-                     st.success("อัปเดตสำเร็จ!")
+                     st.success("อัปเดตข้อมูลสำเร็จ! (กรุณาเปลี่ยนแท็บเพื่อดูการเปลี่ยนแปลงในแดชบอร์ด)")
 
-    # --- แท็บ 4: ตั้งค่า (เพิ่มบัญชี, แชร์ให้เพื่อน, เปลี่ยน PIN ลบ) ---
+    # --- แท็บ 4: ตั้งค่าระบบและแชร์ ---
     with tab_settings:
         st.header("⚙️ ตั้งค่าระบบส่วนตัว")
         col_add, col_share, col_pin = st.columns(3)
@@ -285,7 +308,6 @@ else:
             st.subheader("🗑️ ลบบัญชี & รหัสผ่าน")
             my_user = session.query(User).filter_by(id=current_user_id).first()
             
-            # ฟอร์มเปลี่ยนรหัส PIN สำหรับลบ
             with st.form("change_pin_form"):
                 st.markdown(f"**รหัสลบปัจจุบันคือ:** `{my_user.delete_pin}`")
                 new_pin = st.text_input("ตั้งรหัสลบข้อมูลใหม่", type="password")
@@ -296,7 +318,6 @@ else:
                         st.success("เปลี่ยนรหัสลบข้อมูลสำเร็จ!")
             
             st.divider()
-            # ฟอร์มลบบัญชี
             my_accounts = [a for a in viewable_accounts if a.user_id == current_user_id]
             if my_accounts:
                 with st.form("delete_acc_form"):
