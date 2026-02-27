@@ -3,10 +3,11 @@ import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Enum, func
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 import datetime
+from datetime import timedelta
 import enum
 
 # ==========================================
-# 1. ตั้งค่า Database (เวอร์ชัน 4: มีระบบ User)
+# 1. ตั้งค่า Database (เวอร์ชัน 5: Full Features)
 # ==========================================
 Base = declarative_base()
 
@@ -62,19 +63,26 @@ class TransactionRecord(Base):
     id = Column(Integer, primary_key=True)
     order_id = Column(String(100), nullable=False)
     account_id = Column(Integer, ForeignKey('affiliate_accounts.id'))
-    item_name = Column(String(255)) 
+    
+    # รวมฟิลด์สินค้าและร้านค้ากลับมา เพื่อใช้ทำ Ranking
+    product_name = Column(String(255)) 
+    product_link = Column(String(500))
+    shop_name = Column(String(255))
+    shop_link = Column(String(500))
+    
     quantity = Column(Integer, default=1) 
     commission_amount = Column(Float, default=0.0) 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
     account = relationship("AffiliateAccount", back_populates="transactions")
 
-engine = create_engine('sqlite:///affiliate_farm_v4.db', echo=False)
+engine = create_engine('sqlite:///affiliate_farm_v5.db', echo=False)
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
 
 # ==========================================
-# 2. ฟังก์ชันระบบ Session และคำนวณวัน
+# 2. ฟังก์ชันระบบ Session
 # ==========================================
 st.set_page_config(page_title="Affiliate Farm Pro (SaaS)", layout="wide")
 
@@ -146,21 +154,21 @@ else:
 
     st.title("💼 Affiliate Farm Management System")
     
-    tab_dashboard, tab_txns, tab_manage, tab_settings = st.tabs([
-        "📊 แดชบอร์ด", "📥 บันทึกยอดขาย", "📝 จัดการสถานะบัญชี", "⚙️ ตั้งค่าระบบ/แชร์"
+    # --- มี 5 แท็บครบถ้วน ---
+    tab_dashboard, tab_txns, tab_ranking, tab_manage, tab_settings = st.tabs([
+        "📊 แดชบอร์ด", "📥 บันทึกยอดขาย", "🏆 อันดับขายดี", "📝 จัดการสถานะบัญชี", "⚙️ ตั้งค่าระบบ/แชร์"
     ])
     
     viewable_accounts = get_viewable_accounts(current_user_id)
     viewable_acc_ids = [a.id for a in viewable_accounts]
 
-    # --- แท็บ 1: แดชบอร์ดหลัก (จัดเต็มกลับมาแล้ว!) ---
+    # --- แท็บ 1: แดชบอร์ดหลัก ---
     with tab_dashboard:
         st.header("📈 สรุปภาพรวมฟาร์มบัญชีของคุณ")
         if not viewable_accounts:
             st.info("คุณยังไม่มีบัญชีในระบบ ไปที่แท็บ 'ตั้งค่าระบบ' เพื่อเพิ่มบัญชีครับ")
         else:
             total_accounts = len(viewable_accounts)
-            
             account_stats = session.query(
                 AffiliateAccount.id,
                 func.sum(TransactionRecord.commission_amount).label('total_comm'),
@@ -170,7 +178,6 @@ else:
             acc_500_baht = sum(1 for stat in account_stats if (stat.total_comm or 0) >= 500)
             acc_90_orders = sum(1 for stat in account_stats if (stat.total_qty or 0) >= 90)
             
-            # นับสถานะทั้งหมดจาก viewable_accounts
             kyc_submitted = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.SUBMITTED)
             kyc_approved = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.APPROVED)
             kyc_rejected = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.REJECTED)
@@ -209,35 +216,114 @@ else:
             col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
             col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
 
-    # --- แท็บ 2: บันทึกยอดขายแบบเรียบง่าย ---
+    # --- แท็บ 2: บันทึกยอดขาย ---
     with tab_txns:
         st.header("📥 บันทึกจำนวนที่ขายได้และค่าคอม")
         if viewable_accounts:
-            with st.form("add_simple_txn"):
+            with st.form("add_txn_form"):
                 acc_name = st.selectbox("เลือกบัญชี:", [a.account_name for a in viewable_accounts])
                 order_id = st.text_input("รหัสออเดอร์/เลขอ้างอิง*")
-                item_name = st.text_input("ชื่อสินค้า (พิมพ์สั้นๆ เพื่อให้จำได้)")
                 
-                c1, c2 = st.columns(2)
-                qty = c1.number_input("จำนวนที่ขายได้ (ชิ้น)*", min_value=1, value=1, step=1)
-                comm = c2.number_input("ค่าคอมมิชชั่นรวมที่ได้ (บาท)*", min_value=0.0, step=1.0)
+                c_s1, c_s2 = st.columns(2)
+                shop_name = c_s1.text_input("ชื่อร้านค้า (พิมพ์สั้นๆ ได้เลย)")
+                shop_link = c_s2.text_input("ลิงก์ร้านค้า (ไม่บังคับ)")
+                
+                c_p1, c_p2 = st.columns(2)
+                product_name = c_p1.text_input("ชื่อสินค้า* (เพื่อให้ขึ้นใน Ranking)")
+                product_link = c_p2.text_input("ลิงก์สินค้า (ไม่บังคับ)")
+                
+                c_q1, c_q2 = st.columns(2)
+                qty = c_q1.number_input("จำนวนที่ขายได้ (ชิ้น)*", min_value=1, value=1, step=1)
+                comm = c_q2.number_input("ค่าคอมมิชชั่นรวมที่ได้ (บาท)*", min_value=0.0, step=1.0)
                 
                 if st.form_submit_button("💾 บันทึกยอด"):
-                    if order_id and acc_name:
+                    if order_id and acc_name and product_name:
                         acc = session.query(AffiliateAccount).filter_by(account_name=acc_name, user_id=current_user_id).first()
                         if not acc:
-                            st.error("คุณไม่สามารถเพิ่มยอดเข้าบัญชีที่ถูกแชร์มาให้ได้ (เพิ่มได้เฉพาะบัญชีตัวเอง)")
+                            st.error("เพิ่มยอดได้เฉพาะบัญชีที่เป็นของคุณเท่านั้น (บัญชีแชร์เพิ่มไม่ได้)")
                         else:
-                            txn = TransactionRecord(order_id=order_id, account_id=acc.id, item_name=item_name, quantity=qty, commission_amount=comm)
+                            txn = TransactionRecord(
+                                order_id=order_id, account_id=acc.id,
+                                shop_name=shop_name, shop_link=shop_link,
+                                product_name=product_name, product_link=product_link,
+                                quantity=qty, commission_amount=comm
+                            )
                             session.add(txn)
                             session.commit()
                             st.success(f"บันทึกยอดขายสำเร็จ!")
                     else:
-                        st.error("กรุณากรอกข้อมูลให้ครบถ้วน")
+                        st.error("กรุณากรอก รหัสออเดอร์ และ ชื่อสินค้า ให้ครบถ้วน")
         else:
             st.warning("ยังไม่มีบัญชีให้บันทึกยอด")
 
-    # --- แท็บ 3: จัดการสถานะ (คื่นชีพฟอร์มวันที่ให้ด้วย) ---
+    # --- แท็บ 3: อันดับขายดี (กลับมาแล้ว!) ---
+    with tab_ranking:
+        st.header("🏆 จัดอันดับ 20 ร้านค้า & สินค้าขายดี")
+        st.markdown("วิเคราะห์สินค้าและร้านค้า เฉพาะข้อมูลบัญชีของคุณและเพื่อนที่แชร์ให้")
+        
+        col_date1, col_date2 = st.columns(2)
+        start_date = col_date1.date_input("ตั้งแต่หน้า", value=datetime.date.today() - timedelta(days=30))
+        end_date = col_date2.date_input("ถึงวันที่", value=datetime.date.today())
+        
+        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+        end_dt = datetime.datetime.combine(end_date, datetime.time.max)
+
+        st.divider()
+        col_rank_shop, col_rank_prod = st.columns(2)
+
+        # TOP 20 ร้านค้า
+        with col_rank_shop:
+            st.subheader("🏪 Top 20 ร้านค้าขายดี")
+            top_shops = session.query(
+                TransactionRecord.shop_name.label('ชื่อร้านค้า'),
+                TransactionRecord.shop_link.label('ลิงก์ร้านค้า'),
+                func.sum(TransactionRecord.quantity).label('จำนวนขายได้ (ชิ้น)'),
+                func.sum(TransactionRecord.commission_amount).label('ค่าคอมรวม')
+            ).filter(
+                TransactionRecord.account_id.in_(viewable_acc_ids),
+                TransactionRecord.created_at >= start_dt, TransactionRecord.created_at <= end_dt,
+                TransactionRecord.shop_name != None, TransactionRecord.shop_name != ""
+            ).group_by(TransactionRecord.shop_name, TransactionRecord.shop_link) \
+             .order_by(func.sum(TransactionRecord.quantity).desc()).limit(20).all()
+
+            if top_shops:
+                df_shops = pd.DataFrame(top_shops)
+                df_shops['ค่าคอมรวม'] = df_shops['ค่าคอมรวม'].apply(lambda x: f"฿{x:,.2f}")
+                st.dataframe(
+                    df_shops,
+                    column_config={"ลิงก์ร้านค้า": st.column_config.LinkColumn("🔗 ลิงก์ร้านค้า")},
+                    hide_index=True, use_container_width=True
+                )
+            else:
+                st.info("ไม่มีข้อมูลร้านค้าในช่วงเวลานี้")
+
+        # TOP 20 สินค้า
+        with col_rank_prod:
+            st.subheader("📦 Top 20 สินค้าขายดี")
+            top_products = session.query(
+                TransactionRecord.product_name.label('ชื่อสินค้า'),
+                TransactionRecord.product_link.label('ลิงก์สินค้า'),
+                func.sum(TransactionRecord.quantity).label('จำนวนขายได้ (ชิ้น)'),
+                func.sum(TransactionRecord.commission_amount).label('ค่าคอมรวม')
+            ).filter(
+                TransactionRecord.account_id.in_(viewable_acc_ids),
+                TransactionRecord.created_at >= start_dt, TransactionRecord.created_at <= end_dt,
+                TransactionRecord.product_name != None, TransactionRecord.product_name != ""
+            ).group_by(TransactionRecord.product_name, TransactionRecord.product_link) \
+             .order_by(func.sum(TransactionRecord.quantity).desc()).limit(20).all()
+
+            if top_products:
+                df_prods = pd.DataFrame(top_products)
+                df_prods['ค่าคอมรวม'] = df_prods['ค่าคอมรวม'].apply(lambda x: f"฿{x:,.2f}")
+                st.dataframe(
+                    df_prods,
+                    column_config={"ลิงก์สินค้า": st.column_config.LinkColumn("🔗 ลิงก์สินค้า")},
+                    hide_index=True, use_container_width=True
+                )
+            else:
+                st.info("ไม่มีข้อมูลสินค้าในช่วงเวลานี้")
+
+    # --- แท็บ 4: จัดการสถานะ ---
     with tab_manage:
          st.header("📝 อัปเดตสถานะรายบัญชี")
          my_accounts = [a for a in viewable_accounts if a.user_id == current_user_id]
@@ -267,7 +353,7 @@ else:
                      session.commit()
                      st.success("อัปเดตข้อมูลสำเร็จ! (กรุณาเปลี่ยนแท็บเพื่อดูการเปลี่ยนแปลงในแดชบอร์ด)")
 
-    # --- แท็บ 4: ตั้งค่าระบบและแชร์ ---
+    # --- แท็บ 5: ตั้งค่าระบบและแชร์ ---
     with tab_settings:
         st.header("⚙️ ตั้งค่าระบบส่วนตัว")
         col_add, col_share, col_pin = st.columns(3)
