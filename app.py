@@ -228,19 +228,20 @@ else:
             col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
             col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
 
-    # --- แท็บ 2: อัปเดตรายบัญชี (เพิ่ม Filter) ---
+    # --- แท็บ 2: อัปเดตรายบัญชี (เพิ่ม Filter สถานะปุ่ม) ---
     with tab_manage_acc:
         st.header("📋 จัดการข้อมูลรายบัญชี")
         
         if not my_accounts:
             st.info("คุณยังไม่มีบัญชีให้จัดการครับ")
         else:
-            # 🔍 ส่วนของ Filter ค้นหา
+            # 🔍 ส่วนของ Filter ค้นหาอัปเกรด (4 คอลัมน์)
             st.subheader("🔍 ตัวกรองค้นหาบัญชี")
-            col_f1, col_f2, col_f3 = st.columns(3)
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             search_query = col_f1.text_input("ค้นหาด้วยชื่อบัญชี...")
-            filter_platform = col_f2.selectbox("เลือกแพลตฟอร์ม:", ["ทั้งหมด", "Shopee", "TikTok"])
+            filter_platform = col_f2.selectbox("แพลตฟอร์ม:", ["ทั้งหมด", "Shopee", "TikTok"])
             filter_kyc = col_f3.selectbox("สถานะ KYC:", ["ทั้งหมด"] + [e.value for e in KYCStatus])
+            filter_btn = col_f4.selectbox("สถานะปุ่ม Live:", ["ทั้งหมด"] + [e.value for e in ButtonStatus])
             
             # ทำการกรองข้อมูลตามเงื่อนไขที่เลือก
             filtered_accounts = my_accounts
@@ -250,6 +251,8 @@ else:
                 filtered_accounts = [a for a in filtered_accounts if a.platform.value == filter_platform]
             if filter_kyc != "ทั้งหมด":
                 filtered_accounts = [a for a in filtered_accounts if a.kyc_status.value == filter_kyc]
+            if filter_btn != "ทั้งหมด":
+                filtered_accounts = [a for a in filtered_accounts if a.button_status.value == filter_btn]
 
             st.divider()
 
