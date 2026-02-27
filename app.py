@@ -135,7 +135,7 @@ if not st.session_state['logged_in']:
                         st.success("สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ")
 
 # ==========================================
-# 4. ระบบหลัก (All-in-One Dashboard)
+# 4. ระบบหลัก 
 # ==========================================
 else:
     current_user_id = st.session_state['user_id']
@@ -150,18 +150,19 @@ else:
 
     st.title("💼 Affiliate Farm Management")
     
-    # ยุบรวมแท็บให้ดูสะอาดตา
-    tab_dashboard, tab_ranking, tab_settings = st.tabs([
-        "📊 แดชบอร์ด & จัดการบัญชี", "🏆 อันดับขายดี", "⚙️ แชร์และตั้งค่าความปลอดภัย"
+    # แยกแท็บให้ชัดเจนตามที่คุณต้องการ
+    tab_dashboard, tab_manage_acc, tab_ranking, tab_settings = st.tabs([
+        "📊 แดชบอร์ดหลัก", "📝 อัปเดตรายบัญชี", "🏆 อันดับขายดี", "⚙️ ตั้งค่า & แชร์"
     ])
     
     viewable_accounts = get_viewable_accounts(current_user_id)
     viewable_acc_ids = [a.id for a in viewable_accounts]
+    my_accounts = [a for a in viewable_accounts if a.user_id == current_user_id]
 
-    # --- แท็บ 1: แดชบอร์ด & จัดการบัญชี ---
+    # --- แท็บ 1: แดชบอร์ดหลัก (จัดเต็ม!) ---
     with tab_dashboard:
-        # [ฟีเจอร์ใหม่] เพิ่มบัญชีตรงหน้าแดชบอร์ด
-        with st.expander("➕ คลิกที่นี่เพื่อเพิ่มบัญชีฟาร์มใหม่", expanded=False):
+        # ปุ่มเพิ่มบัญชีแบบเร็ว
+        with st.expander("➕ เพิ่มบัญชีฟาร์มใหม่", expanded=False):
             with st.form("quick_add_acc"):
                 c1, c2, c3 = st.columns(3)
                 new_name = c1.text_input("ชื่อบัญชี*")
@@ -177,9 +178,7 @@ else:
                     else:
                         st.error("กรุณากรอกชื่อและ ID ให้ครบ")
 
-        st.divider()
-        st.subheader("📈 สรุปภาพรวมฟาร์มบัญชีของคุณ")
-        
+        st.header("📈 สรุปภาพรวมฟาร์มบัญชีของคุณ")
         if not viewable_accounts:
             st.info("ยังไม่มีบัญชีในระบบ กรุณากดเพิ่มบัญชีด้านบนครับ")
         else:
@@ -192,6 +191,18 @@ else:
 
             acc_500_baht = sum(1 for stat in account_stats if (stat.total_comm or 0) >= 500)
             acc_90_orders = sum(1 for stat in account_stats if (stat.total_qty or 0) >= 90)
+            
+            kyc_submitted = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.SUBMITTED)
+            kyc_approved = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.APPROVED)
+            kyc_rejected = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.REJECTED)
+            kyc_more_docs = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.MORE_DOCS)
+            
+            btn_requested = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.REQUESTED)
+            btn_live_heart = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.LIVE_HEART)
+            btn_live_only = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.LIVE_ONLY)
+            
+            expedite_kyc = sum(1 for a in viewable_accounts if a.kyc_status == KYCStatus.SUBMITTED and calculate_days_passed(a.kyc_submit_date) >= 15)
+            expedite_btn = sum(1 for a in viewable_accounts if a.button_status == ButtonStatus.REQUESTED and calculate_days_passed(a.button_request_date) >= 15)
 
             col1, col2, col3 = st.columns(3)
             col1.metric("📌 จำนวนบัญชีทั้งหมด", f"{total_accounts} บัญชี")
@@ -199,21 +210,47 @@ else:
             col3.metric("📦 บัญชีที่ขายครบ 90 ชิ้น", f"{acc_90_orders} บัญชี")
             
             st.divider()
-            
-            # [ฟีเจอร์ใหม่] รายชื่อบัญชีที่คลิกขยายเพื่อจัดการได้เลย
-            st.subheader("📋 รายชื่อบัญชี (คลิกที่ชื่อเพื่ออัปเดตข้อมูลรายวัน)")
-            my_accounts = [a for a in viewable_accounts if a.user_id == current_user_id]
-            
+            col4, col5 = st.columns(2)
+            with col4:
+                st.subheader("🛡️ สถานะ KYC")
+                st.info(f"ยื่น KYC แล้ว: **{kyc_submitted}** บัญชี")
+                st.success(f"KYC อนุมัติ: **{kyc_approved}** บัญชี")
+                st.error(f"KYC ไม่อนุมัติ: **{kyc_rejected}** บัญชี")
+                st.warning(f"ยื่นเอกสารเพิ่ม: **{kyc_more_docs}** บัญชี")
+                
+            with col5:
+                st.subheader("🔴 สถานะขอปุ่ม Live")
+                st.info(f"ยื่นขอปุ่ม: **{btn_requested}** บัญชี")
+                st.success(f"ได้ปุ่ม Live + หัวใจ: **{btn_live_heart}** บัญชี")
+                st.warning(f"ได้แต่ปุ่ม Live: **{btn_live_only}** บัญชี")
+                
+            st.divider()
+            st.subheader("🚨 แจ้งเตือน: บัญชีที่ต้องติดตามด่วน (เกิน 15 วัน)")
+            col6, col7 = st.columns(2)
+            col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
+            col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
+
+    # --- แท็บ 2: อัปเดตรายบัญชี (คลิกขยายทำงานรายวัน) ---
+    with tab_manage_acc:
+        st.header("📋 จัดการข้อมูลรายบัญชี")
+        st.markdown("คลิกที่ชื่อบัญชีเพื่อบันทึกยอดขาย แก้ไขยอด หรืออัปเดตสถานะ")
+        
+        if not my_accounts:
+            st.info("คุณยังไม่มีบัญชีให้จัดการครับ")
+        else:
+            # ดึงสถิติอีกรอบเพื่อเอามาโชว์ที่หัวข้อ Expander
+            account_stats = session.query(
+                AffiliateAccount.id,
+                func.sum(TransactionRecord.commission_amount).label('total_comm'),
+                func.sum(TransactionRecord.quantity).label('total_qty') 
+            ).outerjoin(TransactionRecord).filter(AffiliateAccount.id.in_(viewable_acc_ids)).group_by(AffiliateAccount.id).all()
+
             for acc in my_accounts:
-                # คำนวณยอดปัจจุบันของบัญชีนี้
                 stat = next((s for s in account_stats if s.id == acc.id), None)
                 cur_comm = stat.total_comm if stat and stat.total_comm else 0.0
                 cur_qty = stat.total_qty if stat and stat.total_qty else 0
                 
-                # กรอบรายชื่อบัญชีแบบคลิกขยายได้
                 with st.expander(f"🛒 {acc.account_name} | แพลตฟอร์ม: {acc.platform.value} | ยอดปัจจุบัน: ฿{cur_comm:,.2f} ({cur_qty} ชิ้น)"):
-                    
-                    # แท็บย่อยสำหรับการจัดการแต่ละบัญชี
                     t_info, t_add, t_edit, t_status = st.tabs(["📊 สรุปย่อย", "📥 บันทึกยอดวันนี้", "✏️ แก้ไข/ลบยอดเก่า", "📝 อัปเดตสถานะ"])
                     
                     with t_info:
@@ -236,7 +273,7 @@ else:
                                     time.sleep(0.5)
                                     st.rerun()
                                 else:
-                                    st.error("กรอกรหัสและชื่อสินค้าด้วยครับ")
+                                    st.error("กรอกรหัสออเดอร์และชื่อสินค้าด้วยครับ")
 
                     with t_edit:
                         recent_txns = session.query(TransactionRecord).filter_by(account_id=acc.id).order_by(TransactionRecord.created_at.desc()).limit(20).all()
@@ -274,15 +311,23 @@ else:
                             c1, c2 = st.columns(2)
                             n_kyc = c1.selectbox("สถานะ KYC", [e.value for e in KYCStatus], index=list(KYCStatus).index(acc.kyc_status), key=f"kyc_{acc.id}")
                             n_btn = c2.selectbox("สถานะปุ่ม", [e.value for e in ButtonStatus], index=list(ButtonStatus).index(acc.button_status), key=f"btn_{acc.id}")
+                            
+                            d_kyc = acc.kyc_submit_date if acc.kyc_submit_date else datetime.date.today()
+                            d_btn = acc.button_request_date if acc.button_request_date else datetime.date.today()
+                            n_kyc_d = c1.date_input("วันที่ยื่น KYC", value=d_kyc, key=f"dkyc_{acc.id}")
+                            n_btn_d = c2.date_input("วันที่ยื่นขอปุ่ม", value=d_btn, key=f"dbtn_{acc.id}")
+
                             if st.form_submit_button("อัปเดตสถานะ"):
                                 acc.kyc_status = KYCStatus(n_kyc)
+                                acc.kyc_submit_date = datetime.datetime.combine(n_kyc_d, datetime.datetime.min.time())
                                 acc.button_status = ButtonStatus(n_btn)
+                                acc.button_request_date = datetime.datetime.combine(n_btn_d, datetime.datetime.min.time())
                                 session.commit()
-                                st.success("อัปเดตสำเร็จ!")
+                                st.success("อัปเดตสถานะและวันที่สำเร็จ!")
                                 time.sleep(0.5)
                                 st.rerun()
 
-    # --- แท็บ 2: อันดับขายดี ---
+    # --- แท็บ 3: อันดับขายดี ---
     with tab_ranking:
         st.header("🏆 จัดอันดับสินค้าขายดี (เฉพาะบัญชีของคุณและเพื่อนที่แชร์มา)")
         col_date1, col_date2 = st.columns(2)
@@ -310,7 +355,7 @@ else:
         else:
             st.info("ไม่มีข้อมูลสินค้าในช่วงเวลานี้")
 
-    # --- แท็บ 3: ตั้งค่าระบบและแชร์ ---
+    # --- แท็บ 4: ตั้งค่า & แชร์ ---
     with tab_settings:
         st.header("⚙️ แชร์ข้อมูลและตั้งค่าความปลอดภัย")
         col_share, col_pin = st.columns(2)
@@ -347,7 +392,6 @@ else:
                         st.success("เปลี่ยนรหัสสำเร็จ!")
             
             st.divider()
-            my_accounts = [a for a in viewable_accounts if a.user_id == current_user_id]
             if my_accounts:
                 with st.form("delete_acc_form"):
                     acc_to_delete = st.selectbox("เลือกลบบัญชี:", [a.account_name for a in my_accounts])
