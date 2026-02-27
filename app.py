@@ -84,7 +84,8 @@ except:
     db_url = 'sqlite:///affiliate_farm_v5.db'
 
 engine = create_engine(db_url, echo=False)
-Session = sessionmaker(bind=engine) Base.metadata.create_all(engine)
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
 session = Session()
 
 # ==========================================
