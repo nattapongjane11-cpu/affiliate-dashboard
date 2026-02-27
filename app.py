@@ -47,6 +47,10 @@ class TransactionRecord(Base):
     commission_amount = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     account = relationship("AffiliateAccount", back_populates="transactions")
+# สร้างตารางในฐานข้อมูล (ถ้ายังไม่มี)
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(bind=engine)
+session = SessionLocal()
 
 # สร้างตารางในฐานข้อมูล (ให้บรรทัดนี้อยู่ต่อท้ายโค้ดด้านบนนะครับ)
 Base.metadata.create_all(engine)
