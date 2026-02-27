@@ -49,6 +49,7 @@ class TransactionRecord(Base):
     account = relationship("AffiliateAccount", back_populates="transactions")
 
 # สร้างตารางในฐานข้อมูล (ถ้ายังไม่มี)
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(bind=engine)
 session = SessionLocal()
