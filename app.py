@@ -76,8 +76,14 @@ class TransactionRecord(Base):
     
     account = relationship("AffiliateAccount", back_populates="transactions")
 
-engine = create_engine('sqlite:///affiliate_farm_v5.db', echo=False)
-Base.metadata.create_all(engine)
+# ดึงลิงก์จากความลับของ Streamlit
+try:
+    db_url = st.secrets["DB_URL"]
+except:
+    # เผื่อกรณีรันเทสในคอมตัวเอง
+    db_url = 'sqlite:///affiliate_farm_v5.db'
+
+engine = create_engine(db_url, echo=False)
 Session = sessionmaker(bind=engine)
 session = Session()
 
