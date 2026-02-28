@@ -7,6 +7,15 @@ from datetime import timedelta
 import enum
 import time
 
+# --- นำเข้าไลบรารีของ Facebook ---
+try:
+    from facebook_business.api import FacebookAdsApi
+    from facebook_business.adobjects.adaccount import AdAccount
+    from facebook_business.adobjects.campaign import Campaign
+    HAS_FB_SDK = True
+except ImportError:
+    HAS_FB_SDK = False
+
 # ==========================================
 # 1. ตั้งค่า Database (V5 - เชื่อมต่อ Google Cloud)
 # ==========================================
@@ -76,7 +85,6 @@ class TransactionRecord(Base):
     
     account = relationship("AffiliateAccount", back_populates="transactions")
 
-# ✨ จุดที่แก้ไข: ดึงลิงก์ฐานข้อมูลจาก Streamlit Secrets 
 try:
     db_url = st.secrets["DB_URL"]
 except:
@@ -90,7 +98,7 @@ session = Session()
 # ==========================================
 # 2. ฟังก์ชันระบบ
 # ==========================================
-st.set_page_config(page_title="Affiliate Farm Pro", layout="wide")
+st.set_page_config(page_title="Affiliate Farm Pro", layout="wide", page_icon="🌾")
 
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
@@ -156,8 +164,9 @@ else:
 
     st.title("💼 Affiliate Farm Management")
     
-    tab_dashboard, tab_manage_acc, tab_ranking, tab_settings = st.tabs([
-        "📊 แดชบอร์ดหลัก", "📝 อัปเดตรายบัญชี", "🏆 อันดับขายดี", "⚙️ ตั้งค่า & แชร์"
+    # ✨ เพิ่มแท็บที่ 4: จัดการโฆษณา FB เข้าไปตรงนี้
+    tab_dashboard, tab_manage_acc, tab_ranking, tab_fb_ads, tab_settings = st.tabs([
+        "📊 แดชบอร์ดหลัก", "📝 อัปเดตรายบัญชี", "🏆 อันดับขายดี", "📈 จัดการโฆษณา FB", "⚙️ ตั้งค่า & แชร์"
     ])
     
     viewable_accounts = get_viewable_accounts(current_user_id)
@@ -234,14 +243,13 @@ else:
             col6.error(f"⚠️ บัญชีเร่ง KYC: **{expedite_kyc}** บัญชี")
             col7.error(f"⚠️ บัญชีเร่งปุ่ม Live: **{expedite_btn}** บัญชี")
 
-    # --- แท็บ 2: อัปเดตรายบัญชี (เพิ่ม Filter สถานะปุ่ม) ---
+    # --- แท็บ 2: อัปเดตรายบัญชี ---
     with tab_manage_acc:
         st.header("📋 จัดการข้อมูลรายบัญชี")
         
         if not my_accounts:
             st.info("คุณยังไม่มีบัญชีให้จัดการครับ")
         else:
-            # 🔍 ส่วนของ Filter ค้นหาอัปเกรด (4 คอลัมน์)
             st.subheader("🔍 ตัวกรองค้นหาบัญชี")
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             search_query = col_f1.text_input("ค้นหาด้วยชื่อบัญชี...")
@@ -249,7 +257,6 @@ else:
             filter_kyc = col_f3.selectbox("สถานะ KYC:", ["ทั้งหมด"] + [e.value for e in KYCStatus])
             filter_btn = col_f4.selectbox("สถานะปุ่ม Live:", ["ทั้งหมด"] + [e.value for e in ButtonStatus])
             
-            # ทำการกรองข้อมูลตามเงื่อนไขที่เลือก
             filtered_accounts = my_accounts
             if search_query:
                 filtered_accounts = [a for a in filtered_accounts if search_query.lower() in a.account_name.lower()]
@@ -438,7 +445,80 @@ else:
             else:
                 st.info("ไม่มีข้อมูลสินค้าในช่วงเวลานี้")
 
-    # --- แท็บ 4: ตั้งค่า & แชร์ ---
+    # --- แท็บ 4: จัดการโฆษณา Facebook (ของใหม่!) ---
+    with tab_fb_ads:
+        st.header("📈 ศูนย์บัญชาการ Facebook Ads")
+        
+        if not HAS_FB_SDK:
+            st.error("⚠️ ยังไม่ได้ติดตั้งไลบรารีของ Facebook! กรุณาเพิ่ม `facebook_business` ในไฟล์ requirements.txt")
+        elif "FB_APP_ID" not in st.secrets:
+            st.warning("⚠️ ยังไม่ได้ใส่กุญแจ API ใน Streamlit Secrets ครับ (FB_APP_ID, FB_APP_SECRET, etc.)")
+            st.info("ไปที่ Settings ของ Streamlit Cloud -> เลือก Secrets แล้วตั้งค่าให้ครบก่อนนะครับ")
+        else:
+            try:
+                # ดึงกุญแจจากตู้เซฟ
+                fb_app_id = st.secrets["FB_APP_ID"]
+                fb_app_secret = st.secrets["FB_APP_SECRET"]
+                fb_access_token = st.secrets["FB_ACCESS_TOKEN"]
+                fb_ad_account_id = st.secrets["FB_AD_ACCOUNT_ID"]
+
+                # เปิดประตูเชื่อมต่อกับ Facebook
+                FacebookAdsApi.init(fb_app_id, fb_app_secret, fb_access_token)
+                account = AdAccount(fb_ad_account_id)
+
+                st.success("✅ เชื่อมต่อกับ Facebook สำเร็จ!")
+                st.divider()
+
+                # ดึงข้อมูลแคมเปญทั้งหมดมาโชว์
+                st.subheader("📋 รายการแคมเปญโฆษณาของคุณ")
+                campaigns = account.get_campaigns(
+                    fields=['name', 'status', 'daily_budget', 'effective_status']
+                )
+
+                if not campaigns:
+                    st.info("ยังไม่มีแคมเปญโฆษณาในบัญชีนี้ครับ")
+                else:
+                    for camp in campaigns:
+                        with st.container():
+                            c1, c2, c3 = st.columns([3, 1, 1])
+                            
+                            # 1. โชว์ชื่อแคมเปญ
+                            c1.markdown(f"**{camp.get('name', 'ไม่มีชื่อแคมเปญ')}**")
+                            
+                            # 2. โชว์สถานะ (เปิด/ปิด)
+                            eff_status = camp.get('effective_status', '')
+                            status_color = "🟢 ทำงานอยู่" if eff_status == 'ACTIVE' else "🔴 ปิดใช้งาน"
+                            c1.caption(f"สถานะ: {status_color}")
+
+                            # 3. โชว์งบประมาณ (FB เก็บเป็นหน่วยสตางค์ ต้องหาร 100)
+                            budget = int(camp.get('daily_budget', 0)) / 100
+                            c2.write(f"งบ: ฿{budget:,.2f}/วัน")
+
+                            # 4. ปุ่มสวิตช์ เปิด/ปิด แคมเปญ
+                            camp_status = camp.get('status', '')
+                            is_active = (camp_status == 'ACTIVE')
+                            
+                            if is_active:
+                                if c3.button("⏸️ พักโฆษณา", key=f"pause_{camp['id']}"):
+                                    campaign = Campaign(camp['id'])
+                                    campaign.api_update(params={'status': Campaign.Status.paused})
+                                    st.success("พักแคมเปญโฆษณาแล้ว! (ระบบกำลังรีเฟรช...)")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                            else:
+                                if c3.button("▶️ เปิดโฆษณา", key=f"start_{camp['id']}"):
+                                    campaign = Campaign(camp['id'])
+                                    campaign.api_update(params={'status': Campaign.Status.active})
+                                    st.success("เปิดแคมเปญโฆษณาแล้ว! (ระบบกำลังรีเฟรช...)")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                            st.markdown("---")
+
+            except Exception as e:
+                st.error("❌ เชื่อมต่อ Facebook ไม่สำเร็จ หรือ Token อาจจะหมดอายุครับ")
+                st.warning(f"รายละเอียด Error: {e}")
+
+    # --- แท็บ 5: ตั้งค่า & แชร์ ---
     with tab_settings:
         st.header("⚙️ แชร์ข้อมูลและตั้งค่าความปลอดภัย")
         col_share, col_pin = st.columns(2)
